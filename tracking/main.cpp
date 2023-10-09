@@ -70,6 +70,61 @@ int meanShift_custom( cv::InputArray _probImage, cv::Rect& window, cv::TermCrite
     return i;
 }
 
+cv::Rect init_window(cv::Mat frame, cv::Mat hist, cv::Mat mask, int channels[], const float* range[], cv::Size dstSize) {
+    cv::Size s = frame.size();
+    cv::Rect window;
+    cv::TermCriteria term_crit(cv::TermCriteria::EPS | cv::TermCriteria::COUNT, 10, 1);
+
+    cv::Mat dst;
+    cv::calcBackProject(&frame, 1, channels, hist, dst, range);
+    cv::multiply(dst, mask, dst);
+
+    int n;
+    cv::Size orig(0, 0);
+    for(n = 2; n < 100 && s.width/n >= dstSize.width && s.height/n >= dstSize.height; n*=2) {
+        cv::Rect ts1(orig.width, orig.height, s.width/n, s.height/n);
+        cv::Rect ts2(orig.width + s.width/n, orig.height, s.width/n, s.height/n);
+        cv::Rect ts3(orig.width, orig.height + s.height/n, s.width/n, s.height/n);
+        cv::Rect ts4(orig.width + s.width/n, orig.height + s.height/n, s.width/n, s.height/n);
+        std::vector<cv::Scalar> res = {cv::sum(dst(ts1)), cv::sum(dst(ts2)), cv::sum(dst(ts3)), cv::sum(dst(ts4))};
+        std::vector<double> sums;
+        sums.reserve(4);
+        sums.push_back(res[0][0] + res[0][1] + res[0][2] + res[0][3]);
+
+        int max_i = 0;
+        for(int i = 1; i < 4; i++) {
+            sums.push_back(res[i][0] + res[i][1] + res[i][2] + res[i][3]);
+            if(sums[i] > sums[max_i]) max_i = i;
+        }
+
+        orig.width += (max_i%2)*s.width/n;
+        orig.height += (max_i/2)*s.height/n;
+    }
+
+    window.x = orig.width;
+    window.y = orig.height;
+    window.width = dstSize.width;
+    window.height = dstSize.height;
+
+    meanShift_custom(dst, window, term_crit);
+
+    return window;
+}
+
+void plot_hist(cv::Mat hist) {
+    int histSize = 100;
+    int hist_w = 512, hist_h = 400;
+    int bin_w = cvRound( (double) hist_w/histSize );
+    cv::Mat histImage( hist_h, hist_w, CV_8UC3, cv::Scalar( 0,0,0) );
+    for( int i = 1; i < histSize; i++ )
+    {
+        line( histImage, cv::Point( bin_w*(i-1), hist_h - cvRound(hist.at<float>(i-1)) ),
+              cv::Point( bin_w*(i), hist_h - cvRound(hist.at<float>(i)) ),
+              cv::Scalar( 255, 0, 0), 2, 8, 0 );
+    }
+    cv::imshow("hist", histImage);
+}
+
 int main(int argc, char* argv[]) {
     cv::VideoCapture capture(FILENAME);
     if (!capture.isOpened()){
@@ -86,20 +141,27 @@ int main(int argc, char* argv[]) {
     cv::Mat roi = frame(track_window);
     cv::Mat hsv_roi, mask;
     cvtColor(roi, hsv_roi, cv::COLOR_BGR2HSV);
-    inRange(hsv_roi, cv::Scalar(0, 60, 32), cv::Scalar(180, 255, 255), mask);
+    inRange(hsv_roi, cv::Scalar(0, 255, 100), cv::Scalar(99, 255, 255), mask);
 
-    float range_[] = {0, 180};
+    float range_[] = {0, 99};
     const float* range[] = {range_};
     cv::Mat roi_hist, fgMask;
-    int histSize[] = {180};
+    int histSize[] = {100};
     int channels[] = {0};
     calcHist(&hsv_roi, 1, channels, mask, roi_hist, 1, histSize, range);
     normalize(roi_hist, roi_hist, 0, 255, cv::NORM_MINMAX);
 
-    cv::TermCriteria term_crit(cv::TermCriteria::EPS | cv::TermCriteria::COUNT, 10, 1);
-
+    plot_hist(roi_hist);
     cv::Ptr<cv::BackgroundSubtractor> pBackSub = cv::createBackgroundSubtractorMOG2();
+    pBackSub->apply(frame, fgMask);
 
+    track_window = init_window(frame, roi_hist, fgMask, channels, range, track_window.size());
+
+    cv::TermCriteria term_crit(cv::TermCriteria::EPS | cv::TermCriteria::COUNT, 100, 1);
+
+
+
+    double lambda = 3;
     capture >> frame;
     while(!frame.empty()) {
         cv::Mat hsv, dst;
@@ -109,11 +171,21 @@ int main(int argc, char* argv[]) {
 
         cv::calcBackProject(&hsv, 1, channels, roi_hist, dst, range);
 
+        cv::Scalar res = cv::sum(dst(track_window));
+        if(res[0] + res[1] + res[2] + res[3] < lambda) {
+            track_window = init_window(frame, roi_hist, fgMask, channels, range, track_window.size());
+        }
+
         cv::multiply(dst, fgMask, dst);
         meanShift_custom(dst, track_window, term_crit);
 
-        cv::rectangle(frame, track_window, 255, 2);
+        cv::rectangle(frame, track_window, cv::Scalar(0, 0, 255), 2);
         cv::imshow("image", frame);
+        cv::imshow("dst", dst);
+
+        cv::Mat lum;
+        cv::cvtColor(frame, lum, cv::COLOR_BGR2GRAY);
+        //cv::imshow("image_lum", hsv.);
         //cv::imshow("image_mask", fgMask);
 
         capture >> frame;
@@ -123,4 +195,4 @@ int main(int argc, char* argv[]) {
             break;
     }
     return 0;
-}
+} // donner à Ziad block matching
