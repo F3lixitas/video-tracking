@@ -176,6 +176,7 @@ int main(int argc, char* argv[]) {
             track_window = init_window(frame, roi_hist, fgMask, channels, range, track_window.size());
         }
 
+        cv::imshow("dst av mult", dst);
         cv::multiply(dst, fgMask, dst);
         meanShift_custom(dst, track_window, term_crit);
 
@@ -186,7 +187,7 @@ int main(int argc, char* argv[]) {
         cv::Mat lum;
         cv::cvtColor(frame, lum, cv::COLOR_BGR2GRAY);
         //cv::imshow("image_lum", hsv.);
-        //cv::imshow("image_mask", fgMask);
+        cv::imshow("image_mask", fgMask);
 
         capture >> frame;
 
